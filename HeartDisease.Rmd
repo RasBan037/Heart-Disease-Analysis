@@ -1,0 +1,262 @@
+---
+title: "Heart Disease Analysis"
+author: "Rasaq Banjo"
+date: '2022-05-17'
+output: word_document
+df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+##Import Dataset
+```{r}
+heart=read.csv("heart disease.csv")
+```
+
+
+##Data Exploration
+
+
+
+```{r}
+#View first 6 set of the data
+head(heart)
+```
+
+```{r}
+#View last 6 set of the data
+tail(heart)
+```
+```{r}
+#Check distribution
+table(heart$HeartDisease)
+```
+
+```{r}
+#Check for missing data
+is.na(heart)
+
+```
+```{r}
+sum(is.na(heart))
+```
+
+```{r}
+#Dataset summary
+summary (heart)
+```
+
+```{r}
+#Check minimum age
+min(heart['Age'])
+
+```
+
+```{r}
+#Check Maximum age
+max(heart['Age'])
+
+```
+
+```{r}
+#Barplot reperesentation of the the dataset
+
+barplot(prop.table(table(heart$HeartDisease)),
+        col = rainbow(2),
+        ylim = c(0,1),
+        main = "Heart Disease Distribution")
+```
+
+```{r}
+table(heart$HeartDisease,heart$Sex)
+
+barplot(prop.table(table(heart$HeartDisease,heart$Sex)),
+        col = rainbow(2),
+        ylim = c(0,1),
+        main = "Heart Disease Distribution in relation to Sex")
+```
+
+##partitioning the data into training and test set
+
+```{r}
+
+library(caret)
+trainIndex <- createDataPartition(heart$HeartDisease, p = .67,
+                                  list = FALSE)
+Train <- heart[ trainIndex,]
+Test  <- heart[-trainIndex,]
+
+```
+
+
+#Using Logistics Regression Model
+```{r}
+heart=read.csv("heart disease.csv")
+xtabs(~HeartDisease +Sex+ ChestPainType, data = Train) # table of categorical outcome
+
+```
+
+```{r}
+library(ggplot2)
+plot=ggplot(heart, aes(x=Cholesterol , y= RestingBP, color=HeartDisease)) + geom_line()
+
+plot
+
+```
+
+```{r}
+ggplot(heart, aes(x=HeartDisease, fill=Sex))+geom_bar()
+```
+
+
+#Logistic model
+```{r}
+logit <- glm(HeartDisease ~. , data=Train, family = "binomial")
+
+summary(logit)
+
+```
+
+
+```{r}
+confint(logit) # CIs using profiled log-likelihood
+```
+
+#Wald Test
+```{r}
+
+library(aod)
+wald.test(b = coef(logit), Sigma = vcov(logit), Terms = 4:6)
+
+
+```
+
+```{r}
+exp(cbind(OR = coef(logit), confint(logit))) # OR and 95% CI
+```
+
+##Likelihood Ratio Test
+
+```{r}
+logLik(logit) # see the model's log-likelihood
+```
+
+```{r}
+
+with(logit, null.deviance - deviance) # find the difference in deviance
+```
+
+```{r}
+
+with(logit, df.null - df.residual) # The df for the difference between the two models = the number of predictor variables
+```
+
+```{r}
+
+with(logit, pchisq(null.deviance - deviance, df.null - df.residual, lower.tail = FALSE)) # obtain p-value
+```
+
+
+##Predicting probability
+```{r}
+n.n1 <- predict(logit, Test, type = "response")
+
+n.n2 <- with(heart, data.frame(HeartDisease = rep(seq(from = 200, to = 800, length.out = 100),4),Cholesterol = mean(Cholesterol)
+                              ,RestingBP=rep(seq(from = 200, to = 800, length.out = 100),4)))
+
+n.n3 <- cbind(heart, predict(logit, newdata =heart, type = "link", se = TRUE)) # including standard error for CI later
+n.n3 <- within(n.n3, {
+  PredictedProb <- plogis(fit)
+  LL <- plogis(fit - (1.96 * se.fit))
+  UL <- plogis(fit + (1.96 * se.fit))
+})
+View(n.n3)
+hist(n.n3$PredictedProb, main="Histogram of predicted probabilities", col="red")
+```
+##Obtaining the test data
+```{r}
+
+library(dplyr)
+Test <- Test  %>% mutate(model_pred = 1*(n.n1 > .53) + 0,
+                                 HeartDisease = 1*(HeartDisease == "Yes") + 0)
+```
+
+#Plotting the predicted probabilities 
+
+```{r}
+library(ggplot2)
+ggplot(n.n3, aes(x = HeartDisease, y = PredictedProb)) + 
+  geom_ribbon(aes(ymin = LL, ymax = UL, fill = ChestPainType
+  ), alpha = 0.2) + geom_line(aes(colour= Sex), size = 1)
+```
+##Determining the model accuracy for logistic regression
+```{r}
+Test <- Test %>% mutate(accurate = 1*(model_pred == HeartDisease))
+sum(Test$accurate)/nrow(Test)
+
+```
+
+##Using Decision Tree
+```{r}
+library(rpart)
+Train$HeartDisease <- factor(Train$HeartDisease)
+
+Tree <- rpart(HeartDisease ~. -HeartDisease, data =Train)
+
+plot(Tree, main="Decision Tree of Heart Disease")
+
+text(Tree, pretty = 2)
+
+
+```
+
+
+#Showing the Segments of the Anomalies 
+
+```{r}
+plot(y=heart$Cholesterol, x=heart$MaxHR, 
+     pch = 16, col = "blue", ylab = "Cholesterol", xlab = "Max HR")
+abline(v =136.5, col = "red", lwd = 2) #a vertical line
+
+```
+
+
+##Making prediction
+
+```{r}
+library(rpart)
+predict_unseen <-predict(Tree, Train, type = 'class')
+
+```
+
+##Testing the patients that did have heart disease and those that didnt
+
+```{r}
+table_heart <- table(Train$HeartDisease, predict_unseen)
+table_heart
+
+```
+##estimating the confusion matrix accuracy metrics
+
+```{r}
+accuracy_Test <- sum(diag(table_heart)) / sum(table_heart)
+print(paste('Accuracy for test', accuracy_Test))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
